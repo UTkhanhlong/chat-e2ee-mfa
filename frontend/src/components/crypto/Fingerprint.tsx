@@ -1,0 +1,2 @@
+import React from 'react'
+export default function Fingerprint({ pubkeyJwk }:{ pubkeyJwk:any }){ const [fp,setFp]=React.useState('........'); React.useEffect(()=>{(async()=>{const buf=new TextEncoder().encode(JSON.stringify(pubkeyJwk||{})); const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',buf)); const hex=Array.from(hash).map(x=>x.toString(16).padStart(2,'0')).join(''); setFp(hex.slice(0,8));})()},[pubkeyJwk]); return <span title='Fingerprint'>{fp}</span> }

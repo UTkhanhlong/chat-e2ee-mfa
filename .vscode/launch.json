@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach Backend (9229)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true
+    },
+    {
+      "name": "Launch Chrome (5173)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5173"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "chat-e2ee-mfa",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n be,fe -c blue,green \"npm:dev -w backend\" \"npm:dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "start": "npm run start -w backend"
+  },
+  "devDependencies": {
+    "@types/multer": "^2.0.0",
+    "@types/nodemailer": "^7.0.2",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@types/react-transition-group": "^4.4.12",
+    "@types/send": "^1.2.1",
+    "@types/sequelize": "^4.28.20",
+    "@types/socket.io": "^3.0.1",
+    "@types/strip-json-comments": "^0.0.30",
+    "@types/validator": "^13.15.4",
+    "concurrently": "^9.0.0"
+  },
+  "dependencies": {
+    "detect-port": "^2.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "nodemailer": "^7.0.10",
+    "pg": "^8.16.3",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.37.7",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  }
+}

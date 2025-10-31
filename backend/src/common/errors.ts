@@ -1,0 +1,1 @@
+export class AppError extends Error{constructor(public status:number,msg:string){super(msg);}} export const asyncWrap=(fn:any)=>(req:any,res:any,next:any)=>Promise.resolve(fn(req,res,next)).catch(next);
