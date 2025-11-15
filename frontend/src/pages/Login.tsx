@@ -1,281 +1,200 @@
+// src/pages/Login.tsx
 import * as React from 'react'
-import { api } from '../lib/api' 
-import { useAppStore } from '../app/store' 
-import * as E2EE from '../lib/e2ee' 
+import { api } from '../lib/api'
+import { useAppStore } from '../app/store'
+import * as E2EE from '../lib/e2ee'
 import {
-  Paper, Typography, TextField, Stack, Button, Divider,
-  CircularProgress, RadioGroup, FormControlLabel, Radio
+  Paper, Typography, TextField, Stack, Button, Alert, CircularProgress,
+  RadioGroup, FormControlLabel, Radio, InputAdornment, Box
 } from '@mui/material'
 import VpnKeyOutlinedIcon from '@mui/icons-material/VpnKeyOutlined'
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
 import EmailIcon from '@mui/icons-material/Email'
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 
 export default function Login() {
-  // ---- STATE ----
   const [identifier, setIdentifier] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [username, setUsername] = React.useState('')
   const [email, setEmail] = React.useState('')
   const [dob, setDob] = React.useState('')
   const [gender, setGender] = React.useState<'Nam' | 'Nữ' | 'Khác'>('Nam')
-  const [mode, setMode] = React.useState<'login' | 'register' | 'forgot' | 'reset'>('login')
-  const [needMfa, setNeedMfa] = React.useState(false) 
+  const [mode, setMode] = React.useState<'login' | 'register' | 'forgot' | 'reset' | '2fa'>('login')
   const [code, setCode] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
   const [newPassword, setNewPassword] = React.useState('')
-
-  // State để lưu trữ identifier tạm thời khi chuyển sang màn hình 2FA
   const [pendingIdentifier, setPendingIdentifier] = React.useState('')
 
-  const { setAccess, setUser, logout } = useAppStore()
+  const { setAccess, setUser } = useAppStore()
 
-  // ---- HELPERS ----
   const handleApiCall = async (fn: () => Promise<void>) => {
     setLoading(true)
     setError('')
     try {
       await fn()
     } catch (err: any) {
-      console.error('🔴 API error:', err)
-      // Thử phân tích lỗi từ Backend nếu có
-      let errorMessage = err.message || 'Lỗi kết nối hoặc máy chủ.'
+      console.error('API error:', err)
+      let msg = 'Lỗi kết nối hoặc máy chủ.'
       try {
-        // Cố gắng phân tích phản hồi lỗi JSON từ Backend
-        const jsonPart = err.message.split(':: ')[1];
-        if (jsonPart) {
-          const jsonError = JSON.parse(jsonPart);
-          if (jsonError.error) errorMessage = jsonError.error;
-        }
+        const json = JSON.parse(err.message.split(':: ')[1] || '{}')
+        msg = json.error || json.message || msg
       } catch {}
-      setError(errorMessage)
+      setError(msg)
     } finally {
       setLoading(false)
     }
   }
 
-  // ---- ĐĂNG KÝ (Giữ nguyên) ----
-  async function register() {
-    await handleApiCall(async () => {
-      if (!username || !email || !password) {
-        setError('Vui lòng nhập đủ tên, email và mật khẩu.')
-        return
-      }
-
-      const res = await api('/api/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          username,
-          email,
-          rawPassword: password,
-          dob,
-          gender,
-        }),
-      })
-
-      // 🔐 Sinh cặp khóa ECDH mới sau khi đăng ký
-      const keyPair = await E2EE.generateKeyPair()
-      const pubB64 = await E2EE.exportPublicKey(keyPair.publicKey)
-      const privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey)
-      localStorage.setItem('pubKey', pubB64)
-      localStorage.setItem('privKey', JSON.stringify(privJwk))
-
-      // 📡 Gửi publicKey thật lên server
-      if (res.user?.id) {
-        await api('/api/auth/update-key', {
-          method: 'POST',
-          body: JSON.stringify({
-            user_id: res.user.id,
-            public_key: pubB64,
-          }),
-        })
-        console.log('📡 Public key đã gửi lên server khi đăng ký.')
-      }
-
-      // Thay đổi `alert` bằng thông báo trực tiếp hoặc modal nếu cần
-      alert('🎉 Đăng ký thành công! Vui lòng đăng nhập.')
-      setMode('login')
-    })
-  }
-
-  // ---- ĐĂNG NHẬP (ĐÃ SỬA ĐỔI CHO 2FA EMAIL) ----
-  async function login() {
-    await handleApiCall(async () => {
-      const d = await api('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          identifier,
-          rawPassword: password,
-        }),
-      })
-
-      console.log('🟢 Login response:', d)
-
-      // 💡 BƯỚC MỚI: KIỂM TRA YÊU CẦU 2FA
-      if (d.required2fa) {
-        setNeedMfa(true) // Chuyển sang màn hình nhập mã 2FA
-        setPendingIdentifier(identifier) // Lưu identifier để dùng trong bước xác minh
-        setPassword('') // Xóa mật khẩu đã nhập
-        // ❌ Không cấp JWT và không chuyển hướng
-        return 
-      }
-
-      // 🔐 TIẾP TỤC ĐĂNG NHẬP THÔNG THƯỜNG (Nếu không cần 2FA)
-      const token = d.access || d.accessToken || d.access_token
-      if (!token) {
-        setError('Đăng nhập thất bại. Kiểm tra lại thông tin.')
-        return
-      }
-
-      finalizeLogin(token, d.user)
-    })
-  }
-
-  // ---- XÁC MINH 2FA EMAIL (HÀM MỚI) ----
-  async function verify2FACode() {
-    await handleApiCall(async () => {
-      // ✅ SỬA ĐỔI: Kiểm tra code phải có đúng 6 ký tự (như đã sinh ở backend)
-      if (!pendingIdentifier || code.length !== 6) {
-        setError('Vui lòng nhập mã 2FA gồm 6 chữ số.')
-        return
-      }
-
-      const d = await api('/api/auth/2fa/verify-email', { // Gọi API mới
-        method: 'POST',
-        body: JSON.stringify({
-          identifier: pendingIdentifier,
-          code: code,
-        }),
-      })
-
-      const token = d.access || d.accessToken || d.access_token
-      if (!token) {
-        setError('Xác minh 2FA thất bại. Mã không hợp lệ hoặc đã hết hạn.')
-        return
-      }
-
-      // ✅ Xác minh thành công, hoàn tất đăng nhập
-      finalizeLogin(token, d.user)
-    })
-  }
-
-  // ---- LOGIC CHUNG KẾT THÚC ĐĂNG NHẬP ----
-  async function finalizeLogin(token: string, user: any) {
+  const finalizeLogin = async (token: string, userData: any) => {
     setAccess(token)
     localStorage.setItem('access', token)
-    if (user) {
-      setUser(user)
-      localStorage.setItem('user', JSON.stringify(user))
+    if (userData) {
+      setUser(userData)
+      localStorage.setItem('user', JSON.stringify(userData))
     }
 
-    // 🔐 Nếu chưa có keypair, tạo và cập nhật lại
-    const existingPub = localStorage.getItem('pubKey')
-    const existingPriv = localStorage.getItem('privKey')
+    if (!localStorage.getItem('ecdsa_priv')) {
+      const ecdhPair = await E2EE.generateEcdhKeyPair()
+      const ecdsaPair = await E2EE.generateEcdsaKeyPair()
 
-    if (!existingPub || !existingPriv) {
-      console.log('🟢 Chưa có keypair — tạo mới...')
-      const keyPair = await E2EE.generateKeyPair()
-      const pubB64 = await E2EE.exportPublicKey(keyPair.publicKey)
-      const privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey)
-      localStorage.setItem('pubKey', pubB64)
-      localStorage.setItem('privKey', JSON.stringify(privJwk))
+      const ecdhPub = await E2EE.exportPublicKey(ecdhPair.publicKey)
+      const ecdsaPub = await E2EE.exportPublicKey(ecdsaPair.publicKey)
+      const ecdhPriv = await crypto.subtle.exportKey('jwk', ecdhPair.privateKey)
+      const ecdsaPriv = await crypto.subtle.exportKey('jwk', ecdsaPair.privateKey)
 
-      if (user?.id) {
-        await api('/api/auth/update-key', {
-          method: 'POST',
-          body: JSON.stringify({
-            user_id: user.id,
-            public_key: pubB64,
-          }),
-        })
-        console.log('📡 Public key đã cập nhật sau khi đăng nhập.')
-      }
+      localStorage.setItem('ecdh_pub', ecdhPub)
+      localStorage.setItem('ecdsa_pub', ecdsaPub)
+      localStorage.setItem('ecdh_priv', JSON.stringify(ecdhPriv))
+      localStorage.setItem('ecdsa_priv', JSON.stringify(ecdsaPriv))
+
+      await api('/api/auth/update-key', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: userData.id,
+          ecdsa_key: ecdsaPub,
+        }),
+      })
     }
 
     location.assign('/chat')
   }
 
-  // ---- LOGOUT (Giữ nguyên) ----
-  const handleLogout = () => {
-    localStorage.removeItem('access')
-    localStorage.removeItem('user')
-    logout()
-    location.assign('/login')
+  const register = async () => {
+    await handleApiCall(async () => {
+      if (!username || !email || !password) {
+        setError('Vui lòng nhập đủ thông tin.')
+        return
+      }
+
+      const res = await api('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ username, email, rawPassword: password, dob, gender }),
+      })
+
+      if (res.access && res.user) {
+        await finalizeLogin(res.access, res.user)
+      } else {
+        setError('Đăng ký thất bại.')
+      }
+    })
   }
 
-  // ---- QUÊN / ĐẶT LẠI MẬT KHẨU (Giữ nguyên) ----
-  async function requestResetCode() {
+  const login = async () => {
     await handleApiCall(async () => {
-      await api('/api/auth/request-reset', {
+      const res = await api('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ identifier, rawPassword: password }),
       })
-      // Thay đổi `alert` bằng thông báo trực tiếp hoặc modal nếu cần
-      alert('📧 Mã xác minh đã được gửi tới email của bạn.')
+
+      if (res.required2fa) {
+        setPendingIdentifier(identifier)
+        setPassword('')
+        setMode('2fa')
+        return
+      }
+
+      if (res.access && res.user) {
+        await finalizeLogin(res.access, res.user)
+      } else {
+        setError('Đăng nhập thất bại.')
+      }
+    })
+  }
+
+  const verify2FA = async () => {
+    await handleApiCall(async () => {
+      if (code.length !== 6) {
+        setError('Mã 2FA phải có 6 ký tự.')
+        return
+      }
+
+      const res = await api('/api/auth/2fa/verify-email', {
+        method: 'POST',
+        body: JSON.stringify({ identifier: pendingIdentifier, code }),
+      })
+
+      if (res.access && res.user) {
+        await finalizeLogin(res.access, res.user)
+      } else {
+        setError('Mã 2FA không hợp lệ hoặc đã hết hạn.')
+      }
+    })
+  }
+
+  const requestReset = async () => {
+    await handleApiCall(async () => {
+      await api('/api/auth/request-reset', { method: 'POST', body: JSON.stringify({ email }) })
+      alert('Mã đã được gửi đến email.')
       setMode('reset')
     })
   }
 
-  async function resetPassword() {
+  const resetPassword = async () => {
     await handleApiCall(async () => {
       await api('/api/auth/reset-password', {
         method: 'POST',
         body: JSON.stringify({ email, code, newPassword }),
       })
-      // Thay đổi `alert` bằng thông báo trực tiếp hoặc modal nếu cần
-      alert('✅ Đổi mật khẩu thành công! Vui lòng đăng nhập lại.')
+      alert('Đặt lại mật khẩu thành công!')
       setMode('login')
+      setEmail('')
+      setCode('')
+      setNewPassword('')
     })
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !loading) {
       e.preventDefault()
-      // ✅ SỬA ĐỔI LOGIC: Gọi verify2FACode nếu đang ở màn hình 2FA
-      if (mode === 'login' && needMfa) {
-          verify2FACode()
-      } else if (mode === 'login' && !needMfa) { 
-          login() // Login bình thường
-      } else if (mode === 'register') {
-          register()
-      } else if (mode === 'forgot') {
-          requestResetCode()
-      } else if (mode === 'reset') {
-          resetPassword()
-      }
+      if (mode === '2fa') verify2FA()
+      else if (mode === 'login') login()
+      else if (mode === 'register') register()
+      else if (mode === 'forgot') requestReset()
+      else if (mode === 'reset') resetPassword()
     }
   }
 
-  // ---- UI ----
   return (
     <Paper elevation={3} sx={{ p: 4, maxWidth: 480, mx: 'auto', borderRadius: 2 }}>
       <Typography variant="h5" fontWeight={700} gutterBottom sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <VpnKeyOutlinedIcon color="primary" sx={{ mr: 1 }} />
-        {mode === 'login' && !needMfa
-          ? 'Đăng nhập hệ thống'
-          : mode === 'login' && needMfa
-          ? 'Xác minh 2FA qua Email' // 💡 TIÊU ĐỀ MỚI CHO 2FA
-          : mode === 'register'
-          ? 'Đăng ký tài khoản mới'
-          : mode === 'forgot'
-          ? 'Quên mật khẩu'
-          : 'Đặt lại mật khẩu'}
+        {mode === '2fa' ? 'Xác minh 2FA' : 
+         mode === 'register' ? 'Đăng ký tài khoản mới' : 
+         mode === 'forgot' ? 'Quên mật khẩu' : 
+         mode === 'reset' ? 'Đặt lại mật khẩu' : 'Đăng nhập'}
       </Typography>
 
-      {error && (
-        <Typography color="error" variant="body2" sx={{ mb: 2 }}>
-          ⚠️ {error}
-        </Typography>
-      )}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <Stack component="form" spacing={2} onKeyDown={handleKeyPress}>
-        {/* --------------------- HIỂN THỊ ĐĂNG KÝ --------------------- */}
         {mode === 'register' && (
           <>
-            <TextField label="Tên người dùng" value={username} onChange={(e) => setUsername(e.target.value)} fullWidth />
-            <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth />
-            <TextField label="Ngày sinh" type="date" value={dob} onChange={(e) => setDob(e.target.value)} InputLabelProps={{ shrink: true }} fullWidth />
-            <RadioGroup row value={gender} onChange={(e) => setGender(e.target.value as any)}>
+            <TextField label="Tên người dùng" value={username} onChange={e => setUsername(e.target.value)} fullWidth autoFocus />
+            <TextField label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} fullWidth />
+            <TextField label="Mật khẩu" type="password" value={password} onChange={e => setPassword(e.target.value)} fullWidth />
+            <TextField label="Ngày sinh" type="date" value={dob} onChange={e => setDob(e.target.value)} InputLabelProps={{ shrink: true }} fullWidth />
+            <RadioGroup row value={gender} onChange={e => setGender(e.target.value as any)}>
               <FormControlLabel value="Nam" control={<Radio />} label="Nam" />
               <FormControlLabel value="Nữ" control={<Radio />} label="Nữ" />
               <FormControlLabel value="Khác" control={<Radio />} label="Khác" />
@@ -283,93 +202,106 @@ export default function Login() {
           </>
         )}
 
-        {/* --------------------- HIỂN THỊ ĐĂNG NHẬP MẬT KHẨU --------------------- */}
-        {mode === 'login' && !needMfa && (
+        {mode === 'login' && (
           <>
-            <TextField
-              label="Email hoặc Tên đăng nhập"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              fullWidth
-            />
-            <TextField
-              label="Mật khẩu"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              fullWidth
-            />
+            <TextField label="Email hoặc tên đăng nhập" value={identifier} onChange={e => setIdentifier(e.target.value)} fullWidth autoFocus />
+            <TextField label="Mật khẩu" type="password" value={password} onChange={e => setPassword(e.target.value)} fullWidth />
           </>
         )}
 
-        {/* --------------------- HIỂN THỊ 2FA EMAIL --------------------- */}
-        {needMfa && (
-          <>
-            <Typography variant="body1" sx={{ mt: 1 }}>
-                Mã xác minh 2FA đã được gửi tới email của bạn. Vui lòng kiểm tra hộp thư.
-            </Typography>
+        {/* 2FA – CHỮ + SỐ (HEX) */}
+        {mode === '2fa' && (
+          <Box sx={{ textAlign: 'center' }}>
+            <Alert severity="info" icon={<EmailIcon />} sx={{ mb: 3, textAlign: 'left' }}>
+              Mã xác minh 2FA đã được gửi đến: <strong>{pendingIdentifier}</strong>
+              <br />
+              Vui lòng kiểm tra hộp thư (bao gồm <strong>Spam/Junk</strong>).
+            </Alert>
+
             <TextField
-              label="Mã 2FA (6 chữ số)"
+              label="Mã 2FA (6 ký tự)"
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value.toUpperCase().replace(/[^0-9A-F]/g, '').slice(0, 6)
+                setCode(value)
+              }}
+              inputProps={{ maxLength: 6 }}
               fullWidth
               autoFocus
+              placeholder="A1B2C3"
+              sx={{
+                mb: 2,
+                '& input': {
+                  textAlign: 'center',
+                  fontSize: '2rem',
+                  letterSpacing: '0.5rem',
+                  fontWeight: 'bold',
+                  fontFamily: 'monospace',
+                  color: '#1976d2',
+                },
+              }}
+              InputProps={{
+                endAdornment: code.length === 6 && (
+                  <InputAdornment position="end">
+                    <VerifiedUserIcon color="success" fontSize="large" />
+                  </InputAdornment>
+                ),
+              }}
             />
+
             <Button
               variant="contained"
-              onClick={verify2FACode}
-              // ✅ Đã sửa: Kiểm tra đúng 6 ký tự
-              disabled={loading || code.length !== 6} 
+              onClick={verify2FA}
+              disabled={loading || code.length !== 6}
               size="large"
-              sx={{ flexGrow: 1 }}
-              startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <VerifiedUserIcon />}
+              fullWidth
+              sx={{ mb: 1, py: 1.5 }}
+              startIcon={loading ? <CircularProgress size={20} /> : <VerifiedUserIcon />}
             >
-              Xác minh và Đăng nhập
+              {loading ? 'Đang xác minh...' : 'Xác minh & Đăng nhập'}
             </Button>
-            <Button variant="text" onClick={() => { setNeedMfa(false); setIdentifier(pendingIdentifier); setPendingIdentifier(''); }} disabled={loading}>
-              ← Quay lại
+
+            <Button
+              variant="text"
+              onClick={() => {
+                setMode('login')
+                setCode('')
+                setError('')
+              }}
+              disabled={loading}
+              startIcon={<ArrowBackIcon />}
+              fullWidth
+            >
+              Quay lại đăng nhập
             </Button>
-          </>
+          </Box>
         )}
 
-
-        {/* --------------------- HIỂN THỊ NÚT CHUNG (Đăng nhập/Đăng ký) --------------------- */}
-        {(mode === 'login' || mode === 'register') && !needMfa && (
+        {(mode === 'login' || mode === 'register') && (
           <Stack direction="row" spacing={2} pt={1}>
             <Button
               variant="contained"
               onClick={mode === 'login' ? login : register}
-              disabled={loading || (mode === 'login' && (!identifier || !password)) || (mode === 'register' && (!username || !email || !password))}
+              disabled={loading || 
+                (mode === 'login' && (!identifier || !password)) || 
+                (mode === 'register' && (!username || !email || !password))
+              }
               size="large"
               sx={{ flexGrow: 1 }}
-              startIcon={loading ? <CircularProgress size={20} color="inherit" /> : null}
+              startIcon={loading ? <CircularProgress size={20} /> : null}
             >
               {mode === 'login' ? 'Đăng nhập' : 'Đăng ký'}
             </Button>
             <Button variant="outlined" onClick={() => setMode(mode === 'login' ? 'register' : 'login')} disabled={loading}>
-              {mode === 'login' ? 'Tạo tài khoản mới' : 'Đã có tài khoản? Đăng nhập'}
+              {mode === 'login' ? 'Tạo tài khoản' : 'Đã có tài khoản'}
             </Button>
           </Stack>
         )}
 
-
-        {/* --------------------- HIỂN THỊ QUÊN/RESET MẬT KHẨU --------------------- */}
-
         {mode === 'forgot' && (
           <>
-            <TextField
-              label="Nhập Email của bạn"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              fullWidth
-            />
-            <Button
-              variant="contained"
-              startIcon={<EmailIcon />}
-              onClick={requestResetCode}
-              disabled={loading || !email}
-            >
+            <TextField label="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} fullWidth autoFocus />
+            <Button variant="contained" onClick={requestReset} disabled={loading || !email} startIcon={<EmailIcon />} fullWidth>
               Gửi mã xác minh
             </Button>
           </>
@@ -377,35 +309,26 @@ export default function Login() {
 
         {mode === 'reset' && (
           <>
-            <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth disabled />
-            <TextField label="Mã xác minh" value={code} onChange={(e) => setCode(e.target.value)} fullWidth />
-            <TextField label="Mật khẩu mới" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} fullWidth />
-            <Button
-              variant="contained"
-              onClick={resetPassword}
-              disabled={loading || !code || !newPassword}
-            >
-              Đổi mật khẩu
+            <TextField label="Email" type="email" value={email} disabled fullWidth />
+            <TextField label="Mã xác minh" value={code} onChange={e => setCode(e.target.value)} fullWidth />
+            <TextField label="Mật khẩu mới" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} fullWidth />
+            <Button variant="contained" onClick={resetPassword} disabled={loading || !code || !newPassword} fullWidth>
+              Đặt lại mật khẩu
             </Button>
           </>
         )}
 
-
-        {/* --------------------- FOOTER LINKS --------------------- */}
-        {mode === 'login' && !needMfa && (
-          <Button variant="text" color="primary" onClick={() => setMode('forgot')}>
+        {mode === 'login' && (
+          <Button variant="text" onClick={() => setMode('forgot')} size="small">
             Quên mật khẩu?
           </Button>
         )}
-
         {(mode === 'forgot' || mode === 'reset') && (
-          <Button variant="text" onClick={() => setMode('login')}>
-            ← Quay lại đăng nhập
+          <Button variant="text" onClick={() => setMode('login')} size="small" startIcon={<ArrowBackIcon />}>
+            Quay lại đăng nhập
           </Button>
         )}
       </Stack>
-
-      {/* ❌ ĐÃ XÓA: Khối UI TOTP cũ */}
     </Paper>
   )
 }

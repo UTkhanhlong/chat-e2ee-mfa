@@ -1,68 +1,62 @@
-import { Request, Response } from 'express'
+import { Response } from 'express'
 import * as ChatService from './chat.service'
 import { io } from '../../server'
+import { AuthRequest } from '../../middlewares/verifyToken'
 
-// 📨 [POST] /api/chat/send
-export async function sendMessage(req: Request, res: Response) {
+export async function sendMessage(req: AuthRequest, res: Response) {
   try {
-    // ✅ Lấy user từ middleware (verifyToken)
-    const user = (req as any).user
-    if (!user || !user.userId) {
-      return res.status(401).json({ error: 'Không xác định được người gửi. Bạn cần đăng nhập lại.' })
+    const user = req.user
+    if (!user?.userId) throw new Error('Unauthorized')
+
+    const { roomId, ciphertext, iv, signature, ephemeralPubKey } = req.body
+    if (!roomId || !ciphertext || !iv || !signature || !ephemeralPubKey) {
+      return res.status(400).json({ error: 'Thiếu field L2 PFS' })
     }
 
-    const { roomId, ciphertext, iv } = req.body || {}
-
-    if (!roomId || !ciphertext || !iv) {
-      console.warn('⚠️ Body không hợp lệ:', req.body)
-      return res.status(400).json({ error: 'Thiếu dữ liệu cần thiết (roomId, ciphertext, iv).' })
-    }
-
-    // ✅ Lưu tin nhắn
     const msg = await ChatService.sendMessage({
-      roomId,
-      senderId: user.userId, // 👈 lấy đúng field từ token
+      roomId: Number(roomId),
+      senderId: user.userId,
       ciphertext,
       iv,
+      signature,
+      ephemeral_pub_key: ephemeralPubKey,
     })
 
-    // 💡 KHẮC PHỤC LỖI: Kiểm tra nếu msg là null/undefined
-    if (!msg) {
-        console.error('❌ Tin nhắn không được tạo trong service, trả về 500.')
-        return res.status(500).json({ error: 'Lỗi máy chủ khi lưu tin nhắn.' })
+    if (!msg) return res.status(500).json({ error: 'Lỗi lưu tin nhắn' })
+
+    const payload = {
+      ...msg.toJSON(),
+      sender: { id: user.userId, username: user.username, email: user.email },
     }
 
-    // 💡 LOGIC REAL-TIME MỚI: Phát tin nhắn qua Socket.IO
-    // KHẮC PHỤC LỖI: Sử dụng .toJSON() để loại bỏ tham chiếu vòng tròn của Sequelize.
-    io.to(`chat_room_${roomId}`).emit('new_message', {
-      ...msg.toJSON(), // Chuyển đổi Model sang POJO
-      sender: { id: user.userId, username: user.username, email: user.email } // Gửi kèm thông tin người gửi
-    })
-
-    return res.json({ success: true, message: msg })
-  } catch (error: any) {
-    console.error('❌ Lỗi gửi tin nhắn:', error)
-    return res.status(500).json({ error: 'Lỗi máy chủ khi lưu tin nhắn.' })
+    io.to(`chat_room_${roomId}`).emit('new_message', payload)
+    return res.json({ success: true, message: payload })
+  } catch (error) {
+    return res.status(500).json({ error: 'Lỗi server' })
   }
 }
 
-// 💬 [GET] /api/chat/history/:roomId (Giữ nguyên)
-export async function getHistory(req: Request, res: Response) {
+export async function getHistory(req: AuthRequest, res: Response) {
   try {
-    const user = (req as any).user
-    if (!user || !user.userId) {
-      return res.status(401).json({ error: 'Không xác định được người dùng. Bạn cần đăng nhập lại.' })
-    }
+    const user = req.user
+    if (!user?.userId) return res.status(401).json({ error: 'Unauthorized' })
 
     const roomId = Number(req.params.roomId)
-    if (isNaN(roomId) || roomId <= 0) {
-      return res.status(400).json({ error: 'roomId không hợp lệ.' })
-    }
+    if (isNaN(roomId) || roomId <= 0) return res.status(400).json({ error: 'roomId không hợp lệ' })
 
     const messages = await ChatService.getMessageHistory(roomId)
-    return res.json({ success: true, messages })
-  } catch (error: any) {
-    console.error('❌ Lỗi lấy lịch sử chat:', error)
-    return res.status(500).json({ error: 'Không thể lấy lịch sử tin nhắn.' })
+    const formatted = messages.map(m => ({
+      id: m.id,
+      sender_id: m.sender_id,
+      ciphertext: m.ciphertext,
+      iv: m.iv,
+      signature: m.signature,
+      ephemeralPubKey: m.ephemeral_pub_key,
+      createdAt: m.createdAt,
+    }))
+
+    return res.json({ success: true, messages: formatted })
+  } catch (error) {
+    return res.status(500).json({ error: 'Lỗi server' })
   }
 }
