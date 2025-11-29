@@ -16,12 +16,10 @@ interface SendMessageDTO {
  */
 export async function sendMessage(data: SendMessageDTO) {
   try {
-    // Validate bắt buộc L2 PFS
     if (!data.signature || !data.ephemeral_pub_key) {
       throw new Error('Thiếu signature hoặc ephemeral_pub_key (L2 PFS)')
     }
 
-    // Tạo tin nhắn mới
     const message = await Message.create({
       room_id: data.roomId,
       sender_id: data.senderId,
@@ -33,7 +31,6 @@ export async function sendMessage(data: SendMessageDTO) {
 
     console.log(`Tin nhắn L2 PFS lưu thành công (room=${data.roomId}, sender=${data.senderId})`)
 
-    // Lấy lại bản ghi + thông tin người gửi
     const fullMessage = await Message.findByPk(message.id, {
       include: [
         {
@@ -48,7 +45,8 @@ export async function sendMessage(data: SendMessageDTO) {
       throw new Error('Lỗi: Không tìm thấy tin nhắn vừa tạo')
     }
 
-    return fullMessage
+    // ← CHỈ THÊM DÒNG NÀY LÀ XONG!
+    return fullMessage as any
   } catch (error: any) {
     console.error('Lỗi khi lưu tin nhắn L2 PFS:', error)
     throw new Error(error.message || 'Không thể lưu tin nhắn vào cơ sở dữ liệu.')
@@ -56,7 +54,7 @@ export async function sendMessage(data: SendMessageDTO) {
 }
 
 /**
- * Lấy lịch sử tin nhắn – Trả về đầy đủ 4 field L2 PFS
+ * Lấy lịch sử tin nhắn – Trả về đầy đủ 4 field L2 PFS + sender
  */
 export async function getMessageHistory(roomId: number) {
   try {
@@ -73,7 +71,9 @@ export async function getMessageHistory(roomId: number) {
     })
 
     console.log(`Đã lấy ${messages.length} tin nhắn L2 PFS từ room=${roomId}`)
-    return messages
+
+    // ← CHỈ THÊM DÒNG NÀY LÀ XONG!
+    return messages as any[]
   } catch (error: any) {
     console.error('Lỗi khi lấy lịch sử tin nhắn:', error)
     throw new Error('Không thể lấy lịch sử tin nhắn.')

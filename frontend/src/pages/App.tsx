@@ -6,37 +6,14 @@ import Typography from "@mui/material/Typography";
 import Stack from "@mui/material/Stack";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
-import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import LockOutlined from "@mui/icons-material/LockOutlined";
 import VerifiedUserOutlined from "@mui/icons-material/VerifiedUserOutlined";
 import SpeedOutlined from "@mui/icons-material/SpeedOutlined";
 import ChatBubbleOutlineRoundedIcon from "@mui/icons-material/ChatBubbleOutlineRounded";
-import SecurityOutlinedIcon from "@mui/icons-material/SecurityOutlined";
+import CardMedia from "@mui/material/CardMedia";
 
-function ChatMockupImage() {
-  return (
-    <Box
-      sx={{
-        width: "100%",
-        height: { xs: 200, md: 400 },
-        borderRadius: 3,
-        bgcolor: "grey.100",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-        boxShadow: 6,
-        color: "grey.600",
-        p: 3,
-      }}
-    >
-      <SecurityOutlinedIcon sx={{ fontSize: 64, mb: 1 }} />
-      <Typography variant="subtitle1" fontWeight={500}>
-        [Thay thế bằng hình ảnh giao diện Chat]
-      </Typography>
-    </Box>
-  );
-}
+// Import hình ảnh của bạn
+import ChatScreenImage from "../assets/z7274495773768_d79d2ae1856c553f3a58b6ebcf7a0f0c.jpg";
 
 export default function HomePage() {
   return (
@@ -114,9 +91,36 @@ export default function HomePage() {
           </Stack>
         </Box>
 
-        {/* === Cột phải: Hình ảnh mô phỏng === */}
-        <Box flex={1} minWidth={0} sx={{ width: "100%" }}>
-          <ChatMockupImage />
+        {/* === Cột phải: Hình ảnh giao diện Chat (ĐÃ THAY THẾ) === */}
+        <Box
+          flex={1}
+          minWidth={0}
+          sx={{
+            width: "100%",
+            borderRadius: 3,
+            boxShadow: 6,
+            // 💡 THÊM DÒNG NÀY ĐỂ ĐẶT NỀN ĐEN
+            bgcolor: "background.paper", 
+            display: 'flex', // Để căn giữa hình ảnh bên trong nếu cần
+            alignItems: 'center',
+            justifyContent: 'center',
+            // Điều chỉnh padding nếu hình ảnh không tràn đầy Box
+            p: 2, 
+          }}
+        >
+          <CardMedia
+            component="img"
+            sx={{
+              width: "100%", // Chiều rộng của ảnh sẽ chiếm hết Box cha
+              maxWidth: '80%', // Giới hạn kích thước ảnh bên trong để tạo padding
+              height: 'auto', // Đảm bảo tỷ lệ khung hình
+              maxHeight: { xs: 180, md: 360 }, // Giới hạn chiều cao
+              objectFit: "contain",
+              borderRadius: 3, // Giữ bo góc cho ảnh nếu muốn
+            }}
+            image={ChatScreenImage}
+            alt="Giao diện Chat An Toàn"
+          />
         </Box>
       </Stack>
 

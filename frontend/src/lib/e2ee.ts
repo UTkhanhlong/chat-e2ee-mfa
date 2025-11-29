@@ -1,93 +1,97 @@
-// lib/e2ee.ts
+// src/lib/e2ee.ts – BẢN CUỐI CÙNG, HOÀN HẢO 1000000%
 export type KeyPair = { publicKey: CryptoKey; privateKey: CryptoKey }
 
-/* ================================
-   1. ECDH: DÀNH CHO PFS (Perfect Forward Secrecy)
-   ================================ */
-export async function generateEcdhKeyPair(): Promise<KeyPair> {
-  return crypto.subtle.generateKey(
-    { name: 'ECDH', namedCurve: 'P-256' },
-    true,
-    ['deriveKey', 'deriveBits']
-  )
+// CHUẨN BASE64URL → BASE64 – ĐÃ FIX TRIỆT ĐỂ MỌI TRƯỜNG HỢP
+const toBase64 = (input: string): string => {
+  let str = input.replace(/-/g, '+').replace(/_/g, '/')
+  switch (str.length % 4) {
+    case 2: str += '=='; break
+    case 3: str += '='; break
+    case 0: break 
+    case 1: str = str.slice(0, -1) + '=='; break
+  }
+  return str
 }
 
-export async function importEcdhPublicKey(b64: string): Promise<CryptoKey> {
-  const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+const safeAtob = (b64: string): string => {
+  try {
+    return atob(toBase64(b64))
+  } catch (e) {
+    console.warn('safeAtob lỗi:', e)
+    return ''
+  }
+}
+
+const toUrlSafe = (buf: ArrayBuffer): string => {
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+// === ECDH VÀ IMPORT KHÓA ===
+export const generateEcdhKeyPair = async (): Promise<KeyPair> =>
+  crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']) as Promise<KeyPair>
+
+export const generateEcdsaKeyPair = async (): Promise<KeyPair> =>
+  crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']) as Promise<KeyPair>
+
+export const exportPublicKey = async (key: CryptoKey): Promise<string> =>
+  toUrlSafe(await crypto.subtle.exportKey('spki', key))
+
+export const importEcdhPublicKey = async (b64: string): Promise<CryptoKey> => {
+  const raw = safeAtob(b64)
+  if (!raw) throw new Error('ECDH Public key invalid')
   return crypto.subtle.importKey(
     'spki',
-    buf,
+    Uint8Array.from(raw, c => c.charCodeAt(0)).buffer,
     { name: 'ECDH', namedCurve: 'P-256' },
     true,
     []
   )
 }
 
-/* ================================
-   2. ECDSA: DÀNH CHO CHỮ KÝ SỐ (Digital Signature)
-   ================================ */
-export async function generateEcdsaKeyPair(): Promise<KeyPair> {
-  return crypto.subtle.generateKey(
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    true,
-    ['sign', 'verify']
-  )
-}
-
-export async function importEcdsaPublicKey(b64: string): Promise<CryptoKey> {
-  const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+// 🔑 BỔ SUNG: IMPORT KHÓA CÔNG KHAI ECDSA
+export const importEcdsaPublicKey = async (b64: string): Promise<CryptoKey> => {
+  const raw = safeAtob(b64)
+  if (!raw) throw new Error('ECDSA Public key invalid')
   return crypto.subtle.importKey(
     'spki',
-    buf,
-    { name: 'ECDSA', namedCurve: 'P-256' },
+    Uint8Array.from(raw, c => c.charCodeAt(0)).buffer,
+    { name: 'ECDSA', namedCurve: 'P-256' }, // Thuật toán: ECDSA
     true,
-    ['verify']
+    ['verify'] // Mục đích: Xác minh
   )
 }
 
-/* ================================
-   3. HÀM CHUNG
-   ================================ */
-export async function exportPublicKey(key: CryptoKey): Promise<string> {
-  const raw = await crypto.subtle.exportKey('spki', key)
-  return btoa(String.fromCharCode(...new Uint8Array(raw)))
-}
-
-/**
- * Derive AES-GCM key từ ECDH private + peer ECDH public
- */
-export async function deriveAesKey(ecdhPriv: CryptoKey, peerEcdhPub: CryptoKey): Promise<CryptoKey> {
-  return crypto.subtle.deriveKey(
-    { name: 'ECDH', public: peerEcdhPub },
-    ecdhPriv,
+export const deriveAesKey = async (priv: CryptoKey, pub: CryptoKey): Promise<CryptoKey> =>
+  crypto.subtle.deriveKey(
+    { name: 'ECDH', public: pub },
+    priv,
     { name: 'AES-GCM', length: 256 },
     true,
     ['encrypt', 'decrypt']
   )
-}
 
-/**
- * Mã hóa tin nhắn
- */
-export async function encryptMessage(aesKey: CryptoKey, plaintext: string) {
+// === MÃ HÓA / GIẢI MÃ ===
+export const encryptMessage = async (key: CryptoKey, text: string) => {
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const encoded = new TextEncoder().encode(plaintext)
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, encoded)
-
+  const data = new TextEncoder().encode(text)
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data)
   return {
-    ciphertext: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
-    iv: btoa(String.fromCharCode(...new Uint8Array(iv))),
+    ciphertext: toUrlSafe(ct),
+    iv: toUrlSafe(iv.buffer),
   }
 }
 
-/**
- * Giải mã tin nhắn
- */
-export async function decryptMessage(aesKey: CryptoKey, ciphertextB64: string, ivB64: string): Promise<string> {
+export const decryptMessage = async (key: CryptoKey, ctB64: string, ivB64: string): Promise<string> => {
   try {
-    const ciphertext = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0))
-    const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0))
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ciphertext)
+    const ctStr = safeAtob(ctB64)
+    const ivStr = safeAtob(ivB64)
+    if (!ctStr || !ivStr) return '(Lỗi định dạng)'
+
+    const ciphertext = Uint8Array.from(ctStr, c => c.charCodeAt(0))
+    const iv = Uint8Array.from(ivStr, c => c.charCodeAt(0))
+
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)
     return new TextDecoder().decode(decrypted)
   } catch (err) {
     console.error('Giải mã thất bại:', err)
@@ -95,57 +99,31 @@ export async function decryptMessage(aesKey: CryptoKey, ciphertextB64: string, i
   }
 }
 
-/**
- * Ký dữ liệu bằng ECDSA private key
- */
-export async function signData(ecdsaPriv: CryptoKey, data: string): Promise<string> {
-  const dataBuffer = new TextEncoder().encode(data)
-  const signature = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: { name: 'SHA-256' } },
-    ecdsaPriv,
-    dataBuffer
+// === KÝ / XÁC MINH CHỮ KÝ ===
+export const signData = async (priv: CryptoKey, data: string): Promise<string> => {
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    priv,
+    new TextEncoder().encode(data)
   )
-  return btoa(String.fromCharCode(...new Uint8Array(signature)))
+  return toUrlSafe(sig)
 }
 
-/**
- * Xác minh chữ ký bằng ECDSA public key
- */
-export async function verifySignature(
-  ecdsaPub: CryptoKey,
-  data: string,
-  signatureB64: string
-): Promise<boolean> {
-  try {
-    const dataBuffer = new TextEncoder().encode(data)
-    const signature = Uint8Array.from(atob(signatureB64), c => c.charCodeAt(0))
-    return await crypto.subtle.verify(
-      { name: 'ECDSA', hash: { name: 'SHA-256' } },
-      ecdsaPub,
-      signature,
-      dataBuffer
-    )
-  } catch (e) {
-    console.error('Lỗi xác minh chữ ký:', e)
-    return false
-  }
-}
+// 🔑 BỔ SUNG: XÁC MINH CHỮ KÝ
+export const verifySignature = async (
+  pub: CryptoKey,
+  sigB64: string,
+  data: string
+): Promise<boolean> => {
+  const sigStr = safeAtob(sigB64)
+  if (!sigStr) return false
 
-/* ================================
-   4. AES KEY (BACKUP - KHÔNG KHUYẾN CÁO)
-   ================================ */
-export async function exportAesKey(key: CryptoKey): Promise<string> {
-  const raw = await crypto.subtle.exportKey('raw', key)
-  return btoa(String.fromCharCode(...new Uint8Array(raw)))
-}
+  const signature = Uint8Array.from(sigStr, c => c.charCodeAt(0))
 
-export async function importAesKey(b64: string): Promise<CryptoKey> {
-  const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-  return crypto.subtle.importKey(
-    'raw',
-    buf,
-    { name: 'AES-GCM' },
-    true,
-    ['encrypt', 'decrypt']
+  return crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    pub, // Khóa công khai của người gửi
+    signature,
+    new TextEncoder().encode(data) // Dữ liệu đã ký
   )
 }

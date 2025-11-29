@@ -94,7 +94,7 @@ Message.init(
     tableName: 'messages',
     modelName: 'Message',
     timestamps: true,
-    underscored: true,
+    underscored: false,
   }
 )
 

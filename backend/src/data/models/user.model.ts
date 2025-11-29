@@ -3,7 +3,7 @@ import { DataTypes, Model, Optional } from 'sequelize'
 import { sequelize } from '../connectDB'
 
 /**
- * Thuộc tính của bảng Users (L2 PFS - Chỉ dùng ECDSA cho chữ ký)
+ * Thuộc tính của bảng Users (L2 PFS - dùng ECDSA cho chữ ký và ECDH cho PFS)
  */
 export interface UserAttributes {
   id: number
@@ -11,8 +11,11 @@ export interface UserAttributes {
   email: string
   passwordHash: string
 
-  // L2: CHỈ DÙNG ECDSA KEY (cho Digital Signature)
-  ecdsa_key: string | null     // ECDSA public key (base64)
+  // ECDSA public key (dùng để xác minh chữ ký)
+  ecdsa_key: string | null
+
+  // ECDH public key (dùng để derive AES cho PFS)
+  ecdh_key: string | null
 
   mfaEnabled: boolean
 
@@ -52,12 +55,13 @@ export interface UserCreationAttributes
     | 'createdAt'
     | 'updatedAt'
     | 'ecdsa_key'
+    | 'ecdh_key'
     | 'email2FACode'
     | 'email2FACodeExpires'
   > {}
 
 /**
- * Model User (L2 PFS - Chỉ dùng ECDSA)
+ * Model User (L2 PFS)
  */
 export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
   public id!: number
@@ -65,8 +69,9 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   public email!: string
   public passwordHash!: string
 
-  // CHỈ DÙNG ECDSA KEY
+  // Keys
   public ecdsa_key!: string | null
+  public ecdh_key!: string | null
 
   public mfaEnabled!: boolean
   public email2FACode!: string | null
@@ -101,13 +106,22 @@ User.init(
     },
     passwordHash: { type: DataTypes.TEXT, allowNull: false, field: 'password_hash' },
 
-    // L2: CHỈ DÙNG ECDSA KEY (CHO CHỮ KÝ SỐ)
+    // ECDSA public key (dùng để xác minh chữ ký)
     ecdsa_key: {
       type: DataTypes.TEXT,
       allowNull: true,
       defaultValue: null,
       field: 'ecdsa_key',
-      comment: 'ECDSA public key (base64) - Dùng để xác minh chữ ký tin nhắn PFS',
+      comment: 'ECDSA public key (base64/base64url) - Dùng để xác minh chữ ký tin nhắn PFS',
+    },
+
+    // ECDH public key (dùng cho PFS)
+    ecdh_key: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: null,
+      field: 'ecdh_key',
+      comment: 'ECDH public key (base64/base64url) - Dùng để derive AES key cho PFS',
     },
 
     mfaEnabled: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'mfa_enabled' },

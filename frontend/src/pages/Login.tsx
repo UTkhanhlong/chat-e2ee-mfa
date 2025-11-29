@@ -54,6 +54,7 @@ export default function Login() {
       localStorage.setItem('user', JSON.stringify(userData))
     }
 
+    // BƯỚC 1: TẠO KEY NẾU CHƯA CÓ TRONG LOCAL
     if (!localStorage.getItem('ecdsa_priv')) {
       const ecdhPair = await E2EE.generateEcdhKeyPair()
       const ecdsaPair = await E2EE.generateEcdsaKeyPair()
@@ -67,14 +68,25 @@ export default function Login() {
       localStorage.setItem('ecdsa_pub', ecdsaPub)
       localStorage.setItem('ecdh_priv', JSON.stringify(ecdhPriv))
       localStorage.setItem('ecdsa_priv', JSON.stringify(ecdsaPriv))
+    }
 
-      await api('/api/auth/update-key', {
-        method: 'POST',
-        body: JSON.stringify({
-          user_id: userData.id,
-          ecdsa_key: ecdsaPub,
-        }),
-      })
+    // BƯỚC 2: LUÔN GỌI update-key ĐỂ ĐẢM BẢO DB CÓ KEY
+    const ecdsaPub = localStorage.getItem('ecdsa_pub')
+    const ecdhPub = localStorage.getItem('ecdh_pub')
+    if (ecdsaPub && ecdhPub && userData?.id) {
+      try {
+        await api('/api/auth/update-key', {
+          method: 'POST',
+          body: JSON.stringify({
+            user_id: userData.id,
+            ecdsa_key: ecdsaPub,
+            ecdh_key: ecdhPub,
+          }),
+        })
+        console.log(`ECDSA + ECDH key đã được cập nhật cho user #${userData.id}`)
+      } catch (err) {
+        console.error('Lỗi cập nhật key:', err)
+      }
     }
 
     location.assign('/chat')
@@ -87,9 +99,12 @@ export default function Login() {
         return
       }
 
+      const payload: any = { username, email, rawPassword: password, gender }
+      if (dob) payload.dob = dob
+
       const res = await api('/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ username, email, rawPassword: password, dob, gender }),
+        body: JSON.stringify(payload),
       })
 
       if (res.access && res.user) {
@@ -209,7 +224,6 @@ export default function Login() {
           </>
         )}
 
-        {/* 2FA – CHỮ + SỐ (HEX) */}
         {mode === '2fa' && (
           <Box sx={{ textAlign: 'center' }}>
             <Alert severity="info" icon={<EmailIcon />} sx={{ mb: 3, textAlign: 'left' }}>
